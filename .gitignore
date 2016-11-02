@@ -12,6 +12,12 @@ quake/forward/psolve
 quake/forward/q4showmeta
 quake/forward/qmesh
 quake/forward/single_query
+laxy
+quake/forward/chino
+quake/forward/cusvm1.3
+quake/forward/nmsz
+quake/forward/simple
+quake/forward/XYLL
 
 .settings
 .cproject

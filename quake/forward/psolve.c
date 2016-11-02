@@ -58,6 +58,8 @@
 #include "drm.h"
 #include "meshformatlab.h"
 
+// include the database for CUSVM
+#include "geodataq.h"
 
 /* ONLY GLOBAL VARIABLES ALLOWED OUTSIDE OF PARAM. and GLOBAL. IN ALL OF PSOLVE!! */
 MPI_Comm comm_solver;
@@ -131,6 +133,10 @@ typedef struct mrecord_t {
     mdata_t mdata;
 } mrecord_t;
 
+// Yang added
+int my_function_to_query_CUSVM(double east_m, double north_m, double depth_m, cvmpayload_t* payload);
+int my_search(double lat, double lon, double depth, cvmpayload_t* payload);
+double bilinear(double x, double y, double x1, double y1, double x2, double y2, double q11, double q21, double q12, double q22);
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
 static void    setrec(octant_t *leaf, double ticksize, void *data);
@@ -274,6 +280,7 @@ static struct Param_t {
     double   theQConstant;
     double   theQAlpha;
     double   theQBeta;
+    database_t cuscvm;
 } Param = {
     .FourDOutFp = NULL,
     .theMonitorFileFp = NULL,
@@ -380,7 +387,7 @@ monitor_print( const char* format, ... )
 
 static void read_parameters( int argc, char** argv ){
 
-#define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 21  /* Must adjust this if adding double params */
+#define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 29  /* Must adjust this if adding double params */
 #define LOCAL_INIT_INT_MESSAGE_LENGTH 22     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
@@ -419,6 +426,14 @@ static void read_parameters( int argc, char** argv ){
     double_message[18] = Param.theQConstant;
     double_message[19] = Param.theQAlpha;
     double_message[20] = Param.theQBeta;
+    double_message[21] = Param.theSurfaceCornersLat[0];
+    double_message[22] = Param.theSurfaceCornersLat[1];
+    double_message[23] = Param.theSurfaceCornersLat[2];
+    double_message[24] = Param.theSurfaceCornersLat[3];
+    double_message[25] = Param.theSurfaceCornersLong[0];
+    double_message[26] = Param.theSurfaceCornersLong[1];
+    double_message[27] = Param.theSurfaceCornersLong[2];
+    double_message[28] = Param.theSurfaceCornersLong[3];
 
 
     MPI_Bcast(double_message, LOCAL_INIT_DOUBLE_MESSAGE_LENGTH, MPI_DOUBLE, 0, comm_solver);
@@ -444,6 +459,14 @@ static void read_parameters( int argc, char** argv ){
     Param.theQConstant      = double_message[18];
     Param.theQAlpha         = double_message[19];
     Param.theQBeta          = double_message[20];
+    Param.theSurfaceCornersLat[0]= double_message[21];
+    Param.theSurfaceCornersLat[1]= double_message[22];
+    Param.theSurfaceCornersLat[2]= double_message[23];
+    Param.theSurfaceCornersLat[3]= double_message[24];
+    Param.theSurfaceCornersLong[0]= double_message[25];
+    Param.theSurfaceCornersLong[1]= double_message[26];
+    Param.theSurfaceCornersLong[2]= double_message[27];
+    Param.theSurfaceCornersLong[3]= double_message[28];
 
     /*Broadcast all integer params*/
     int_message[0]  = Param.theTotalSteps;
@@ -673,7 +696,7 @@ static int32_t parse_parameters( const char* numericalin )
     int32_t   samples, rate;
     int       number_output_planes, number_output_stations,
               damping_statistics, use_checkpoint, checkpointing_rate,
-              step_meshing;
+              step_meshing,iCorner;
 
     double    freq, vscut,
               region_origin_latitude_deg, region_origin_longitude_deg,
@@ -682,7 +705,7 @@ static int32_t parse_parameters( const char* numericalin )
               region_length_north_m, region_depth_deep_m,
               startT, endT, deltaT, softening_factor,
               threshold_damping, threshold_VpVs, freq_vel,
-              qconstant,qalpha,qbeta;
+              qconstant,qalpha,qbeta,*auxiliar;
     char      type_of_damping[64],
 	      	  checkpoint_path[256],
               include_buildings[64],
@@ -817,6 +840,20 @@ static int32_t parse_parameters( const char* numericalin )
                 numericalin );
         return -1;
     }
+
+    auxiliar = (double *)malloc(sizeof(double)*8);
+
+    if ( parsedarray( fp, "domain_surface_corners", 8, auxiliar ) != 0) {
+        fprintf( stderr, "Error parsing simulation parameters from %s\n",
+                numericalin );
+        return -1;
+    }
+
+    for ( iCorner = 0; iCorner < 4; iCorner++){
+    Param.theSurfaceCornersLong[ iCorner ] = auxiliar [ iCorner * 2 ];
+    Param.theSurfaceCornersLat [ iCorner ] = auxiliar [ iCorner * 2 +1 ];
+    }
+    free(auxiliar);
 
     hu_config_get_int_opt(fp, "output_mesh", &Param.theMeshOutFlag );
     hu_config_get_int_opt(fp, "enable_timing_barriers",&Param.theTimingBarriersFlag);
@@ -1009,11 +1046,6 @@ static int32_t parse_parameters( const char* numericalin )
                 "Unknown response for use new q factor (yes or no): %s\n",
 				use_parametricq );
     }
-
-
-
-
-
 
     if ( strcasecmp(implement_drm, "yes") == 0 ) {
         implementdrm = YES;
@@ -1445,7 +1477,49 @@ replicateDB(const char *dbname)
     return ;
 }
 
+// convert x, y to lat and lon
+double bilinear(double x, double y, 
+        double x1, double y1, double x2, double y2, 
+        double q11, double q21, double q12, double q22)
+{
+    double p = (x2 - x1) * (y2 - y1);
+    double f1 = (q11 / p) * (x2 - x) * (y2 - y);
+    double f2 = (q21 / p) * (x - x1) * (y2 - y);
+    double f3 = (q12 / p) * (x2 - x) * (y - y1);
+    double f4 = (q22 / p) * (x - x1) * (y - y1);
+    return f1 + f2 + f3 + f4;
+}
 
+int my_function_to_query_CUSVM(double east_m, double north_m, double depth_m, 
+              cvmpayload_t* payload) {
+    double lon, lat;
+
+    // convert x,y to lat,lon
+    lat = bilinear(north_m, east_m,
+            0, 0, Param.theDomainX, Param.theDomainY,
+            Param.theSurfaceCornersLat[0], Param.theSurfaceCornersLat[1], 
+            Param.theSurfaceCornersLat[3], Param.theSurfaceCornersLat[2]);
+    lon = bilinear(north_m, east_m,
+            0, 0, Param.theDomainX, Param.theDomainY,
+            Param.theSurfaceCornersLong[0], Param.theSurfaceCornersLong[1],
+            Param.theSurfaceCornersLong[3], Param.theSurfaceCornersLong[2]);
+    //printf("%f %f %f %f\n",east_m,north_m,lat,lon);
+    return my_search(lat, depth_m, lon, payload);
+}
+
+int my_search(double lat, double depth, double lon, cvmpayload_t* payload) {
+       double qp,qs;
+       double vs,vp,rho;
+       int containingunit;
+       int flag;
+
+       flag = Single_Search(lat,depth,lon,&vp,&vs,&rho,&containingunit,&qp,&qs,&Param.cuscvm,1);
+       payload->Vp = vp;
+       payload->Vs = vs;
+       payload->rho = rho;
+ //      printf("%f %f %f %f %f\n",lat,lon,depth,vp,vs);
+       return flag;
+}
 
 /**
  * Assign values (material properties) to a leaf octant specified by
@@ -1504,11 +1578,16 @@ setrec( octant_t* leaf, double ticksize, void* data )
                     z_m -= get_surface_shift();
                 }
 
-                if (Param.useProfile == NO) {
-                    res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
-                } else {
-                    res = profile_query(z_m, &g_props);
-                }
+                // if (Param.useProfile == NO) {
+                //     res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+                // } else {
+                //     res = profile_query(z_m, &g_props);
+                // }
+
+                // Yang add
+                // comvert y_m, x_m to longitude, latitude
+                res = my_function_to_query_CUSVM(y_m, x_m, z_m, &g_props);
+                //printf("%d\n",res);
 
                 if (res != 0) {
                     continue;
@@ -2064,6 +2143,7 @@ void setrec(octant_t *leaf, double ticksize, void *data)
 
     return;
 }
+
 #endif	/* USECVMDB */
 
 
@@ -2131,10 +2211,10 @@ mesh_generate()
         drm_fix_coordinates(Global.myOctree->ticksize);
     }
 
+/* We do not need this part for CUSVM
 #ifdef USECVMDB
-    Global.theCVMQueryStage = 0; /* Query CVM database to refine the mesh */
+    Global.theCVMQueryStage = 0;
 #else
-     /* Use flat data record file and distibute the data in memories */
     if (Global.myID == 0) {
 	fprintf(stdout, "slicing CVMDB ...");
     }
@@ -2152,7 +2232,7 @@ mesh_generate()
 	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Slice CVM", 0));
     }
 #endif
-
+*/
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
 
         double myFactor = (double)(1 << mstep); // 2^mstep
@@ -2320,15 +2400,15 @@ mesh_generate()
         fprintf(stdout, "%9.2f\n\n",Timer_Value( "Mesh correct properties", 0 ) );
         fflush(stdout);
     }
-
+/*
 #ifdef USECVMDB
     if ( Param.useProfile == NO ) {
-        /* Close the material database */
         etree_close(Global.theCVMEp);
     }
 #else
     free(Global.theCVMRecord);
-#endif /* USECVMDB */
+#endif
+*/
 }
 
 
@@ -7453,11 +7533,12 @@ mesh_correct_properties( etree_t* cvm )
         				//                        }
         			}
 
-                    if (Param.useProfile == NO) {
-                        res = cvm_query( Global.theCVMEp, east_m, north_m, depth_m, &g_props );
-                    } else {
-                        res = profile_query(depth_m, &g_props);
-                    }
+                    // if (Param.useProfile == NO) {
+                    //     res = cvm_query( Global.theCVMEp, east_m, north_m, depth_m, &g_props );
+                    // } else {
+                    //     res = profile_query(depth_m, &g_props);
+                    // }
+                    res = my_function_to_query_CUSVM(east_m, north_m, depth_m, &g_props);
 
         			if (res != 0) {
         				fprintf(stderr, "Cannot find the query point\n");
@@ -7829,16 +7910,20 @@ int main( int argc, char** argv )
     /* Read input parameters from file */
     read_parameters(argc, argv);
 
-    if ( Param.useProfile == YES ) {
+//    Yang modified: Do no need this
+//    if ( Param.useProfile == YES ) {//
 
-        /* Read profile to memory */
-        load_profile( Param.parameters_input_file );
+//        /* Read profile to memory */
+//        load_profile( Param.parameters_input_file );
+//    } else {
+//        /* Create and open database */
+//        open_cvmdb();
+//    }
 
-    } else {
+    // Init database
+    Init_Database(&Param.cuscvm,Param.cvmdb_input_file,1);
 
-        /* Create and open database */
-        open_cvmdb();
-    }
+    MPI_Barrier(comm_solver);
 
     /* Initialize nonlinear parameters */
     if ( Param.includeNonlinearAnalysis == YES ) {
