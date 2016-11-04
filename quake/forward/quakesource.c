@@ -448,11 +448,13 @@ static void source_initnodalforce ( ptsrc_t *sourcePtr )
     t[0] =   cos(r) * sin(PI / 2 - s) + sin(r) * sin(s) * cos(d);
     t[1] =   cos(r) * sin(s) - sin(r) * cos(s) * cos(d);
     t[2] = - sin(r) * sin(d);
-
+    printf("\n%f %f %f\n",sourcePtr->strike,sourcePtr->dip,sourcePtr->rake);
     for (j = 0; j < 3; j++) {
 	for ( k = 0; k < 3; k++) {
 	    v[j][k] = n[j] * t[k] + n[k] * t[j];
+        printf("%f ",v[j][k]);
 	}
+    printf("\n");
     }
 
     /* calculate equivalent force on each node */
