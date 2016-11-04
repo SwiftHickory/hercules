@@ -90,7 +90,7 @@ typedef enum {
 
 typedef enum {
 
-  POINT = 0, PLANE, SRFH, PLANEWITHKINKS
+  POINT = 0, PLANE, SRFH, PLANEWITHKINKS, FIXEDMOMENT
 
 } source_type_t;
 
@@ -112,6 +112,8 @@ typedef struct ptsrc_t {
   double x, y, z;                   /* Local coordinate inside an element */
 
   double strike, dip, rake;
+
+  double mxx, mxy, mxz, myy, myz, mzz; /* moment tensor */
 
   double delayTime, T0,Ts,Tp;
 
