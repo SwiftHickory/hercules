@@ -414,68 +414,6 @@ compute_source_function (ptsrc_t* pointSource)
 //
 //}
 
-
-/**
- * Initialize the wighting force vector for an element due to a point
- * source.
- */
-static void source_initnodalforce ( ptsrc_t *sourcePtr )
-{
-    /* Normal vector n, tangent vector t, moment tensor v*/
-    double n[3], t[3], v[3][3];
-
-    /* Auxiliar array to handle shapefunctions in a loop */
-    double  xi[3][8]={ {-1,  1, -1,  1, -1,  1, -1, 1} ,
-		       {-1, -1,  1,  1, -1, -1,  1, 1} ,
-		       {-1, -1, -1, -1,  1,  1,  1, 1} };
-
-    /* various convienient variables */
-    int j, k;
-    double dx, dy, dz;
-    double s = sourcePtr->strike / 180.0 * PI;
-    double d = sourcePtr->dip / 180.0 * PI;
-    double r = sourcePtr->rake / 180.0 * PI;
-    double x = sourcePtr->x;
-    double y = sourcePtr->y;
-    double z = sourcePtr->z;
-    double h = sourcePtr->edgesize;
-    double hcube = h * h * h;
-
-    /* the fault normal unit vector */
-    n[0] = - sin(s) * sin(d);
-    n[1] =   cos(s) * sin(d);
-    n[2] = - cos(d);
-
-    /* the fault tangential unit vector */
-    t[0] =   cos(r) * sin(PI / 2 - s) + sin(r) * sin(s) * cos(d);
-    t[1] =   cos(r) * sin(s) - sin(r) * cos(s) * cos(d);
-    t[2] = - sin(r) * sin(d);
-
-    for (j = 0; j < 3; j++) {
-	for ( k = 0; k < 3; k++) {
-	    v[j][k] = n[j] * t[k] + n[k] * t[j];
-	}
-    }
-
-    /* calculate equivalent force on each node */
-    for (j = 0; j < 8 ; j++) {
-	dx= (2 * xi[0][j]) * (h + 2 * xi[1][j] * y) * (h + 2 * xi[2][j] * z)
-	    / (8 * hcube) ;
-
-	dy= (2 * xi[1][j]) * (h + 2 * xi[2][j] * z) * (h + 2 * xi[0][j] * x)
-	    / (8 * hcube);
-
-	dz= (2 * xi[2][j]) * (h + 2 * xi[0][j] * x) * (h + 2 * xi[1][j] * y)
-	    / (8 * hcube);
-
-	sourcePtr->nodalForce[j][0] = v[0][0]*dx + v[0][1]*dy + v[0][2]*dz;
-	sourcePtr->nodalForce[j][1] = v[1][0]*dx + v[1][1]*dy + v[1][2]*dz;
-	sourcePtr->nodalForce[j][2] = v[2][0]*dx + v[2][1]*dy + v[2][2]*dz;
-    }
-
-    return;
-}
-
 /**
  * Initialize the wighting force vector for an element due to a point
  * moment tensor source.
@@ -491,7 +429,7 @@ static void source_initnodalforce_moment ( ptsrc_t *sourcePtr )
                {-1, -1, -1, -1,  1,  1,  1, 1} };
 
     /* various convienient variables */
-    int j;
+    int j,k;
     double dx, dy, dz;
     double x = sourcePtr->x;
     double y = sourcePtr->y;
@@ -524,6 +462,56 @@ static void source_initnodalforce_moment ( ptsrc_t *sourcePtr )
     sourcePtr->nodalForce[j][1] = v[1][0]*dx + v[1][1]*dy + v[1][2]*dz;
     sourcePtr->nodalForce[j][2] = v[2][0]*dx + v[2][1]*dy + v[2][2]*dz;
     }
+    printf("\nMoment Tensor\n");
+    for (j = 0; j < 3; j++) {
+        for (k = 0; k < 3; k++) {
+            printf("%f ",v[j][k]);
+        }
+        printf("\n");
+    }
+
+    return;
+}
+
+/**
+ * Initialize the wighting force vector for an element due to a point
+ * source.
+ */
+static void source_initnodalforce ( ptsrc_t *sourcePtr )
+{
+    /* Normal vector n, tangent vector t, moment tensor v*/
+    double n[3], t[3], v[3][3];
+
+    /* various convienient variables */
+    int j, k;
+    double s = sourcePtr->strike / 180.0 * PI;
+    double d = sourcePtr->dip / 180.0 * PI;
+    double r = sourcePtr->rake / 180.0 * PI;
+
+    /* the fault normal unit vector */
+    n[0] = - sin(s) * sin(d);
+    n[1] =   cos(s) * sin(d);
+    n[2] = - cos(d);
+
+    /* the fault tangential unit vector */
+    t[0] =   cos(r) * sin(PI / 2 - s) + sin(r) * sin(s) * cos(d);
+    t[1] =   cos(r) * sin(s) - sin(r) * cos(s) * cos(d);
+    t[2] = - sin(r) * sin(d);
+
+    for (j = 0; j < 3; j++) {
+	for ( k = 0; k < 3; k++) {
+	    v[j][k] = n[j] * t[k] + n[k] * t[j];
+	}
+    }
+
+    sourcePtr->mxx = v[0][0];
+    sourcePtr->mxy = v[0][1];
+    sourcePtr->mxz = v[0][2];
+    sourcePtr->myy = v[1][1];
+    sourcePtr->myz = v[1][2];
+    sourcePtr->mzz = v[2][2];
+
+    source_initnodalforce_moment ( sourcePtr );
 
     return;
 }
@@ -1355,33 +1343,31 @@ static void update_point_source (ptsrc_t *pointSource,
 
 }
 
-static void
-compute_point_source_strike_srfh (ptsrc_t* ps, int32_t iSrc)
-{
-
+double compute_the_angle_north(int32_t iSrc) {
   vector3D_t pivot, pointInNorth, unitVec;
 
   double norm,fi ;
 
 
-  if( theLonlatOrCartesian == 1 )return;
+  if( theLonlatOrCartesian == 1 )return PI/2;
 
 
   if( theLonlatOrCartesian == 0 ){
 
     pivot = compute_domain_coords_linearinterp(theSourceLonArray[iSrc],
-					       theSourceLatArray[iSrc],
-					       theSurfaceCornersLong ,
-		 			       theSurfaceCornersLat,
-					       theRegionLengthEastM,
-					       theRegionLengthNorthM );
+                           theSourceLatArray[iSrc],
+                           theSurfaceCornersLong ,
+                           theSurfaceCornersLat,
+                           theRegionLengthEastM,
+                           theRegionLengthNorthM );
 
     pointInNorth = compute_domain_coords_linearinterp(theSourceLonArray[iSrc],
-						      theSourceLatArray[iSrc]+.1,
-						      theSurfaceCornersLong ,
-						      theSurfaceCornersLat,
-						      theRegionLengthEastM,
-						      theRegionLengthNorthM );
+                              theSourceLatArray[iSrc]+.1,
+                              theSurfaceCornersLong ,
+                              theSurfaceCornersLat,
+                              theRegionLengthEastM,
+                              theRegionLengthNorthM );
+    }
 
 
     /* Compute Unit Vector */
@@ -1394,20 +1380,91 @@ compute_point_source_strike_srfh (ptsrc_t* ps, int32_t iSrc)
     unitVec.x[0]= unitVec.x[0]/norm;
 
     /* Compute the Angle North-X axis */
-    fi = atan( unitVec.x[0]/unitVec.x[1]);
+    fi = atan2( unitVec.x[1],unitVec.x[0]);
 
-    if(  unitVec.x[1] < 0 ) /* in rad*/
-      fi = fi + PI;
-
-    /* Compute the strike */
-    ps->strike =90+ ps->strike-( 180*fi/PI);
-
-
-  }
+    return fi;
 
 }
 
+static void
+compute_point_source_strike_srfh (ptsrc_t* ps, int32_t iSrc)
+{
 
+    double fi;
+
+    fi = compute_the_angle_north(iSrc);
+
+    printf("\n%f \n",ps->strike);
+    printf("%f \n",fi);
+
+    /* Compute the strike */
+    ps->strike = ps->strike+( 180*fi/PI);
+
+    printf("%f \n",ps->strike);
+
+}
+
+ void rotate_moment_tensor(ptsrc_t *sourcePtr, int32_t iSrc) {
+    double  v[3][3],tmp[3][3],d[3][3],v1[3][3];
+    double fi;
+    int j,k,l;
+
+    // compute the rotation angle
+    fi = compute_the_angle_north(iSrc);
+
+    // moment tensor M
+    v[0][0] = sourcePtr->mxx;
+    v[0][1] = sourcePtr->mxy;
+    v[0][2] = sourcePtr->mxz;
+    v[1][0] = sourcePtr->mxy;
+    v[1][1] = sourcePtr->myy;
+    v[1][2] = sourcePtr->myz;
+    v[2][0] = sourcePtr->mxz;
+    v[2][1] = sourcePtr->myz;
+    v[2][2] = sourcePtr->mzz;
+
+    // compute rotatoin matrix D
+    d[0][0] = cos(fi);
+    d[0][1] = -sin(fi);
+    d[0][2] = 0;
+    d[1][0] = sin(fi);
+    d[1][1] = cos(fi);
+    d[1][2] = 0;
+    d[2][0] = 0;
+    d[2][1] = 0;
+    d[2][2] = 1;
+
+    // rotated moment is is computed by D*M*D'(' Means transpose)
+    // D*M
+    for (j = 0; j < 3; j++) {
+        for (k = 0; k < 3; k++) {
+            tmp[j][k] = 0;
+            for (l = 0; l < 3; l++) {
+                tmp[j][k] += d[j][l]*v[l][k];
+            }
+        }
+    }
+
+    // D*M*D'
+    for (j = 0; j < 3; j++) {
+        for (k = 0; k < 3; k++) {
+            v1[j][k] = 0;
+            for (l = 0; l < 3; l++) {
+                v1[j][k] += tmp[j][l]*d[k][l];
+            }
+        }
+    }
+
+    sourcePtr->mxx = v1[0][0];
+    sourcePtr->mxy = v1[0][1];
+    sourcePtr->mxz = v1[0][2];
+    sourcePtr->myy = v1[1][1];
+    sourcePtr->myz = v1[1][2];
+    sourcePtr->mzz = v1[2][2];
+
+    return;
+
+ }
 
 /*
  * update_point_source: updates a source in the context of an extended
@@ -1432,6 +1489,7 @@ static void update_point_source_srfh (ptsrc_t *pointSource, int32_t isource){
     pointSource->myy    = theSourceMyyArray[isource];
     pointSource->myz    = theSourceMyzArray[isource];
     pointSource->mzz    = theSourceMzzArray[isource];
+    rotate_moment_tensor(pointSource,isource);
   }
 
   pointSource->area   =  theSourceAreaArray[isource];
@@ -1444,7 +1502,6 @@ static void update_point_source_srfh (ptsrc_t *pointSource, int32_t isource){
 
 
   compute_source_function( pointSource );
-
 
   return;
 }
