@@ -462,13 +462,6 @@ static void source_initnodalforce_moment ( ptsrc_t *sourcePtr )
     sourcePtr->nodalForce[j][1] = v[1][0]*dx + v[1][1]*dy + v[1][2]*dz;
     sourcePtr->nodalForce[j][2] = v[2][0]*dx + v[2][1]*dy + v[2][2]*dz;
     }
-    printf("\nMoment Tensor\n");
-    for (j = 0; j < 3; j++) {
-        for (k = 0; k < 3; k++) {
-            printf("%f ",v[j][k]);
-        }
-        printf("\n");
-    }
 
     return;
 }
@@ -1394,13 +1387,8 @@ compute_point_source_strike_srfh (ptsrc_t* ps, int32_t iSrc)
 
     fi = compute_the_angle_north(iSrc);
 
-    printf("\n%f \n",ps->strike);
-    printf("%f \n",fi);
-
     /* Compute the strike */
     ps->strike = ps->strike+( 180*fi/PI);
-
-    printf("%f \n",ps->strike);
 
 }
 
